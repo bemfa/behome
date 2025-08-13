@@ -1,0 +1,27 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "选择 BeHome 授权方式",
+                "description": "BeHome 设备可以通过两种不同的方式在 Home Assistant 中设置。\n\n您可以从您的 bemfa.com 账户导入它们或者手动输入用户私钥。",
+                "menu_options": {
+                    "oauth": "从 bemfa.com 导入 (推荐)",
+                    "manual": "手动输入用户私钥"
+                }
+            },
+            "manual": {
+                "title": "手动输入用户私钥",
+                "data": {
+                    "private_key": "用户私钥"
+                }
+            }
+        },
+        "abort": {
+            "invalid_token": "从巴法云获取的Token无效，无法提取私钥。",
+            "reauth_successful": "重新授权成功！"
+        },
+        "error": {
+            "empty_key": "用户私钥不能为空。"
+        }
+    }
+}

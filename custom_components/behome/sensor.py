@@ -1,0 +1,124 @@
+"""Platform for sensor integration."""
+import logging
+import unicodedata
+from typing import Any, Dict
+
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorDeviceClass,
+    SensorStateClass,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.const import (
+    CONCENTRATION_PARTS_PER_MILLION,
+    CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+    PERCENTAGE,
+    UnitOfTemperature,
+)
+
+from .const import DOMAIN, DEVICE_TYPE_SENSOR
+
+_LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the BeHome sensors from a config entry."""
+    domain_data = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator = domain_data["coordinator"]
+
+    @callback
+    def _async_discover_entities():
+        """Discover and add new entities."""
+        if not coordinator.data:
+            return
+        
+        devices = coordinator.data
+        sensor_devices = [
+            device for device in devices if device["id"] == DEVICE_TYPE_SENSOR
+        ]
+
+        new_sensors = [
+            BeHomeSensor(coordinator, device) for device in sensor_devices
+        ]
+        
+        if new_sensors:
+            async_add_entities(new_sensors)
+
+    config_entry.async_on_unload(
+        coordinator.async_add_listener(_async_discover_entities)
+    )
+    _async_discover_entities()
+
+
+class BeHomeSensor(CoordinatorEntity, SensorEntity):
+    """Representation of a BeHome Sensor."""
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, device: Dict[str, Any]):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._device = device
+        self._topic = device["topic"]
+        self._attr_name = device.get("name", self._topic)
+        self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
+
+        # Set device class and unit based on sensor name
+        name_lower = self.name.lower()
+        if "temperature" in name_lower or "温度" in name_lower:
+            self._attr_device_class = SensorDeviceClass.TEMPERATURE
+            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+        elif "humidity" in name_lower or "湿度" in name_lower:
+            self._attr_device_class = SensorDeviceClass.HUMIDITY
+            self._attr_native_unit_of_measurement = PERCENTAGE
+        elif "pm2.5" in name_lower or "pm25" in name_lower:
+            self._attr_device_class = SensorDeviceClass.PM25
+            self._attr_native_unit_of_measurement = CONCENTRATION_MICROGRAMS_PER_CUBIC_METER
+        elif "co2" in name_lower or "二氧化碳" in name_lower:
+            self._attr_device_class = SensorDeviceClass.CO2
+            self._attr_native_unit_of_measurement = CONCENTRATION_PARTS_PER_MILLION
+        elif "voc" in name_lower:
+            self._attr_device_class = SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS
+            self._attr_native_unit_of_measurement = CONCENTRATION_MICROGRAMS_PER_CUBIC_METER
+        elif "formaldehyde" in name_lower or "甲醛" in name_lower:
+            self._attr_device_class = SensorDeviceClass.FORMALDEHYDE
+            self._attr_native_unit_of_measurement = CONCENTRATION_MICROGRAMS_PER_CUBIC_METER
+        else:
+            # Only set a generic icon if no specific device class is matched
+            self._attr_icon = "mdi:eye"
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        return device.get("state") if device else None
+
+    @property
+    def device_info(self):
+        """Return device information."""
+        device_info = {
+            "identifiers": {(DOMAIN, self._device['deviceID'])},
+            "name": self.name,
+            "manufacturer": "BeHome (Bemfa)",
+            "model": "Smart Sensor",
+        }
+        
+        room_name = self._device.get("room")
+        if room_name:
+            # Normalize the string to 'NFKC' form to clean up potential issues
+            normalized_room_name = unicodedata.normalize("NFKC", room_name).strip()
+            device_info["suggested_area"] = normalized_room_name
+            _LOGGER.debug(
+                f"Device '{self.name}' original room: '{room_name}', "
+                f"suggesting area: '{normalized_room_name}'"
+            )
+        
+        return device_info

@@ -1,0 +1,20 @@
+{
+  "domain": "behome",
+  "name": "BeHome",
+  "codeowners": ["@your-username"],
+  "config_flow": true,
+  "dependencies": ["http", "application_credentials"],
+  "documentation": "https://github.com/gemini-behome/ha-behome",
+  "homeassistant": "2024.4.0",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/gemini-behome/ha-behome/issues",
+  "loggers": ["behome"],
+  "oauth2": {
+    "redirect_uris": [
+      "https://my.home-assistant.io/redirect/oauth"
+    ]
+  },
+  "requirements": ["httpx>=0.25.0"],
+  "version": "1.0.0"
+}
