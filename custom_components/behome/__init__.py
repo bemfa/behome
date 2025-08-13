@@ -32,7 +32,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         config_entry_oauth2_flow.LocalOAuth2Implementation(
             hass,
             DOMAIN,
-            OAUTH2_CLIENT_ID,
+            "88ac425b4558463aa813aed1690db730",
             "",
             OAUTH2_AUTHORIZE_URL,
             OAUTH2_TOKEN_URL,
@@ -51,9 +51,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     private_key = entry.data.get(CONF_PRIVATE_KEY)
     
-    # Handle manually entered keys that are not in the 'token' dict
+    # Handle OAuth2 access_token: remove first 4 and last 4 characters to get real private key
     if not private_key:
-        private_key = entry.data["token"]["access_token"][4:-1]
+        access_token = entry.data["token"]["access_token"]
+        private_key = access_token[4:-4]
 
 
     session = async_get_clientsession(hass)

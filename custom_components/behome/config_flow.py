@@ -32,7 +32,7 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
             config_entry_oauth2_flow.LocalOAuth2Implementation(
                 hass,
                 DOMAIN,
-                OAUTH2_CLIENT_ID,
+                "88ac425b4558463aa813aed1690db730",
                 "",
                 OAUTH2_AUTHORIZE_URL,
                 OAUTH2_TOKEN_URL,
@@ -46,8 +46,8 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
     async def async_oauth_create_entry(self, data: dict) -> dict:
         """Create an entry for the flow after successful authorization."""
         access_token = data["token"]["access_token"]
-        if len(access_token) > 5:
-            private_key = access_token[4:-1]
+        if len(access_token) > 8:  # Need at least 9 characters to remove first 4 and last 4
+            private_key = access_token[4:-4]  # Remove first 4 and last 4 characters
         else:
             self.logger.error("Received access token is too short.")
             return self.async_abort(reason="invalid_token")
@@ -76,7 +76,7 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         """Handle the manual private key entry."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            if user_input[CONF_PRIVATE_KEY]:
+            if user_input.get(CONF_PRIVATE_KEY):
                 return self.async_create_entry(
                     title="BeHome (Manual)", data=user_input
                 )

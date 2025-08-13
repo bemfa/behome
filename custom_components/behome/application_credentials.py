@@ -15,13 +15,8 @@ async def async_get_auth_implementation(
     return config_entry_oauth2_flow.LocalOAuth2Implementation(
         hass,
         auth_domain,
-        ClientCredential(
-            client_id="88ac425b4558463aa813aed1690db730",
-            client_secret="88ac425b4558463aa813aed1690db740",
-            name="BeHomeUltimate"
-        ),
-        AuthorizationServer(
-            authorize_url="https://cloud.bemfa.com/web/mi/index.html",
-            token_url="https://pro.bemfa.com/vs/speaker/v1/haToken"
-        )
+        credential.client_id,
+        credential.client_secret,
+        "https://cloud.bemfa.com/web/mi/index.html",
+        "https://pro.bemfa.com/vs/speaker/v1/v2SpeakerToken"
     )

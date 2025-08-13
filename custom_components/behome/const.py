@@ -4,8 +4,8 @@ DOMAIN = "behome"
 
 # OAuth2.0 Configuration
 OAUTH2_AUTHORIZE_URL = "https://cloud.bemfa.com/web/mi/index.html"
-OAUTH2_TOKEN_URL = "https://pro.bemfa.com/vs/speaker/v1/haToken"
-OAUTH2_CLIENT_ID = "beHome_ha_client_id"
+OAUTH2_TOKEN_URL = "https://pro.bemfa.com/vs/speaker/v1/v2SpeakerToken"
+OAUTH2_CLIENT_ID = "88ac425b4558463aa813aed1690db730"
 
 # API Endpoints
 API_BASE_URL = "https://apis.bemfa.com/vb/ha/v1"
