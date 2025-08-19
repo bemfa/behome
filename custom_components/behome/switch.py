@@ -1,5 +1,5 @@
 """Platform for switch integration."""
-import logging
+import asyncio
 from typing import Any, Dict
 import unicodedata
 
@@ -12,7 +12,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, DEVICE_TYPE_SOCKET, DEVICE_TYPE_SWITCH
 from .api import BemfaAPI
 
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -82,6 +81,16 @@ class BeHomeSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        if not device:
+            return False
+        return device.get("num", False)
+
+    @property
     def is_on(self) -> bool:
         """Return true if the switch is on."""
         device = next(
@@ -99,13 +108,23 @@ class BeHomeSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Instruct the switch to turn on."""
-        if await self._api.control_device(self._topic, "on", self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._topic, {
+            "msg": {"on": True}
+        })
+        
+        await self._api.control_device(self._topic, "on", self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Instruct the switch to turn off."""
-        if await self._api.control_device(self._topic, "off", self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._topic, {
+            "msg": {"on": False}
+        })
+        
+        await self._api.control_device(self._topic, "off", self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     @property
     def device_info(self):
@@ -121,10 +140,7 @@ class BeHomeSwitch(CoordinatorEntity, SwitchEntity):
         if room_name:
             normalized_room_name = unicodedata.normalize("NFKC", room_name).strip()
             device_info["suggested_area"] = normalized_room_name
-            _LOGGER.debug(
-                f"Device '{self.name}' original room: '{room_name}', "
-                f"suggesting area: '{normalized_room_name}'"
-            )
+            pass
             
         return device_info
 

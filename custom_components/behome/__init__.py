@@ -1,6 +1,8 @@
 """The BeHome integration."""
+import asyncio
 import logging
 from datetime import timedelta
+import time
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -18,8 +20,95 @@ from .const import (
 )
 from .api import BemfaAPI
 
-_LOGGER = logging.getLogger(__name__)
-SCAN_INTERVAL = timedelta(minutes=1)
+SCAN_INTERVAL = timedelta(seconds=5)
+
+
+class DummyLogger:
+    """A dummy logger that does nothing but satisfies the coordinator's requirements."""
+    
+    def isEnabledFor(self, level):
+        return False
+    
+    def debug(self, *args, **kwargs):
+        pass
+    
+    def info(self, *args, **kwargs):
+        pass
+    
+    def warning(self, *args, **kwargs):
+        pass
+    
+    def error(self, *args, **kwargs):
+        pass
+
+
+class SmartDataUpdateCoordinator(DataUpdateCoordinator):
+    """Smart coordinator that avoids duplicate refreshes."""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_manual_refresh = 0
+        self._manual_refresh_cooldown = 8  # Increased to 8 seconds
+        self._locked_devices = {}  # topic -> lock_end_time
+        self._device_lock_duration = 5  # Lock device state for 5 seconds
+        
+    def update_device_state_immediately(self, topic: str, new_state: dict):
+        """Update device state immediately in local cache and lock it."""
+        if not self.data:
+            return
+            
+        # Lock this device state to prevent overwrite by polling
+        self._locked_devices[topic] = time.time() + self._device_lock_duration
+            
+        # Find and update the device in the cached data
+        for device in self.data:
+            if device.get("topic") == topic:
+                device.update(new_state)
+                break
+        
+        # Notify all listeners about the state change
+        self.async_update_listeners()
+        
+    async def async_request_refresh_after_delay(self, delay: float = 3.0):
+        """Request refresh after delay, avoiding conflicts with regular polling."""
+        await asyncio.sleep(delay)
+        self._last_manual_refresh = time.time()
+        await self.async_request_refresh()
+        
+    async def _async_update_data(self):
+        """Fetch data with smart refresh logic."""
+        # Skip this update if a manual refresh happened recently
+        if time.time() - self._last_manual_refresh < self._manual_refresh_cooldown:
+            return self.data
+            
+        # Get fresh data from API
+        new_data = await super()._async_update_data()
+        
+        # If we have locked devices, preserve their state
+        if self._locked_devices and new_data:
+            current_time = time.time()
+            # Remove expired locks
+            self._locked_devices = {
+                topic: end_time for topic, end_time in self._locked_devices.items()
+                if end_time > current_time
+            }
+            
+            # Restore locked device states
+            if self.data and self._locked_devices:
+                for device in new_data:
+                    topic = device.get("topic")
+                    if topic in self._locked_devices:
+                        # Find the locked state from current data
+                        for old_device in self.data:
+                            if old_device.get("topic") == topic:
+                                # Preserve the locked state
+                                device.update({
+                                    "msg": old_device.get("msg"),
+                                    "state": old_device.get("state", device.get("state"))
+                                })
+                                break
+        
+        return new_data
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -60,9 +149,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     session = async_get_clientsession(hass)
     api = BemfaAPI(private_key, session)
 
-    coordinator = DataUpdateCoordinator(
+    coordinator = SmartDataUpdateCoordinator(
         hass,
-        _LOGGER,
+        DummyLogger(),
         name="behome_devices",
         update_method=api.get_devices,
         update_interval=SCAN_INTERVAL,

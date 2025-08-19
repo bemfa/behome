@@ -1,5 +1,5 @@
 """Platform for media_player integration."""
-import logging
+import asyncio
 import unicodedata
 from typing import Any, Dict
 
@@ -16,7 +16,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, DEVICE_TYPE_MEDIA_PLAYER
 from .api import BemfaAPI
 
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -74,6 +73,16 @@ class BeHomeMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         )
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        if not device:
+            return False
+        return device.get("num", False)
+
+    @property
     def _current_device_state(self) -> str:
         """Get the latest state for this specific device from the coordinator."""
         device = next(
@@ -88,8 +97,8 @@ class BeHomeMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     async def _send_command(self, msg: str):
         """Send a command to the device."""
-        if await self._api.control_device(self._topic, msg, self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        await self._api.control_device(self._topic, msg, self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_turn_on(self) -> None:
         """Turn the media player on."""
@@ -130,9 +139,6 @@ class BeHomeMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             # Normalize the string to 'NFKC' form to clean up potential issues
             normalized_room_name = unicodedata.normalize("NFKC", room_name).strip()
             device_info["suggested_area"] = normalized_room_name
-            _LOGGER.debug(
-                f"Device '{self.name}' original room: '{room_name}', "
-                f"suggesting area: '{normalized_room_name}'"
-            )
+            pass
         
         return device_info

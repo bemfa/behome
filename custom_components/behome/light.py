@@ -1,5 +1,5 @@
 """Platform for light integration."""
-import logging
+import asyncio
 from typing import Any, Dict
 import unicodedata
 
@@ -16,7 +16,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, DEVICE_TYPE_LIGHT
 from .api import BemfaAPI
 
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -87,6 +86,16 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
         return isinstance(msg, str) and msg.startswith("on")
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        if not device:
+            return False
+        return device.get("num", False)
+
+    @property
     def brightness(self) -> int | None:
         """Return the brightness of the light."""
         device = next(
@@ -122,13 +131,28 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         msg = f"set,{int(brightness / 255 * 100)}" if brightness is not None else "on"
         
-        if await self._api.control_device(self._topic, msg, self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        # Update local state immediately
+        if brightness is not None:
+            self.coordinator.update_device_state_immediately(self._topic, {
+                "msg": {"on": True, "brightness": int(brightness / 255 * 100)}
+            })
+        else:
+            self.coordinator.update_device_state_immediately(self._topic, {
+                "msg": {"on": True}
+            })
+        
+        await self._api.control_device(self._topic, msg, self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Instruct the light to turn off."""
-        if await self._api.control_device(self._topic, "off", self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._topic, {
+            "msg": {"on": False}
+        })
+        
+        await self._api.control_device(self._topic, "off", self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     @property
     def device_info(self):
@@ -145,9 +169,6 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
             # Normalize the string to 'NFKC' form to clean up potential issues
             normalized_room_name = unicodedata.normalize("NFKC", room_name).strip()
             device_info["suggested_area"] = normalized_room_name
-            _LOGGER.debug(
-                f"Device '{self.name}' original room: '{room_name}', "
-                f"suggesting area: '{normalized_room_name}'"
-            )
+            pass
         
         return device_info

@@ -1,5 +1,4 @@
 """Config flow for BeHome integration."""
-import logging
 from typing import Any
 
 import voluptuous as vol
@@ -39,9 +38,6 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
             )
         ]
 
-    @property
-    def logger(self) -> logging.Logger:
-        return logging.getLogger(__name__)
 
     async def async_oauth_create_entry(self, data: dict) -> dict:
         """Create an entry for the flow after successful authorization."""

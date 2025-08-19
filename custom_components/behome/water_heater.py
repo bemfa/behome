@@ -1,5 +1,5 @@
 """Platform for water_heater integration."""
-import logging
+import asyncio
 import unicodedata
 from typing import Any, Dict
 
@@ -19,7 +19,6 @@ from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE
 from .const import DOMAIN, DEVICE_TYPE_WATER_HEATER
 from .api import BemfaAPI
 
-_LOGGER = logging.getLogger(__name__)
 
 HA_OP_MODE_TO_BEMFA = {
     STATE_ECO: "eco",
@@ -83,6 +82,16 @@ class BeHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        if not device:
+            return False
+        return device.get("num", False)
+
+    @property
     def _current_device_state_parts(self) -> list[str]:
         """Get the latest state for this device, split by comma."""
         device = next(
@@ -112,8 +121,8 @@ class BeHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
 
     async def _send_command(self, msg: str):
         """Send a command to the device."""
-        if await self._api.control_device(self._topic, msg, self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        await self._api.control_device(self._topic, msg, self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
@@ -149,9 +158,6 @@ class BeHomeWaterHeater(CoordinatorEntity, WaterHeaterEntity):
             # Normalize the string to 'NFKC' form to clean up potential issues
             normalized_room_name = unicodedata.normalize("NFKC", room_name).strip()
             device_info["suggested_area"] = normalized_room_name
-            _LOGGER.debug(
-                f"Device '{self.name}' original room: '{room_name}', "
-                f"suggesting area: '{normalized_room_name}'"
-            )
+            pass
         
         return device_info

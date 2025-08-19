@@ -1,5 +1,5 @@
 """Platform for fan integration."""
-import logging
+import asyncio
 import math
 import unicodedata
 from typing import Any, Dict
@@ -20,7 +20,6 @@ from homeassistant.util.percentage import (
 from .const import DOMAIN, DEVICE_TYPE_FAN
 from .api import BemfaAPI
 
-_LOGGER = logging.getLogger(__name__)
 SPEED_RANGE = (1, 3)
 
 
@@ -72,6 +71,16 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
         self._attr_name = device.get("name", self._topic)
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
         self._attr_speed_count = len(range(*SPEED_RANGE)) + 1
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        if not device:
+            return False
+        return device.get("num", False)
 
     @property
     def is_on(self) -> bool:
@@ -132,8 +141,8 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the fan."""
-        if await self._api.control_device(self._topic, "off", self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        await self._api.control_device(self._topic, "off", self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_set_percentage(self, percentage: int) -> None:
         """Set the speed of the fan."""
@@ -144,8 +153,8 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
         speed_level = math.ceil(percentage_to_ranged_value(SPEED_RANGE, percentage))
         msg = f"speed,{speed_level}"
         
-        if await self._api.control_device(self._topic, msg, self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        await self._api.control_device(self._topic, msg, self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     @property
     def device_info(self):
@@ -161,9 +170,6 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
         if room_name:
             normalized_room_name = unicodedata.normalize("NFKC", room_name).strip()
             device_info["suggested_area"] = normalized_room_name
-            _LOGGER.debug(
-                f"Device '{self.name}' original room: '{room_name}', "
-                f"suggesting area: '{normalized_room_name}'"
-            )
+            pass
             
         return device_info

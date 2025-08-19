@@ -1,5 +1,5 @@
 """Platform for cover integration."""
-import logging
+import asyncio
 import unicodedata
 from typing import Any, Dict
 
@@ -16,7 +16,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, DEVICE_TYPE_COVER
 from .api import BemfaAPI
 
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -70,6 +69,16 @@ class BeHomeCover(CoordinatorEntity, CoverEntity):
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        if not device:
+            return False
+        return device.get("num", False)
+
+    @property
     def _current_device_state(self) -> str:
         """Get the latest state for this specific device from the coordinator."""
         device = next(
@@ -94,18 +103,18 @@ class BeHomeCover(CoordinatorEntity, CoverEntity):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Instruct the cover to open."""
-        if await self._api.control_device(self._topic, "on", self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        await self._api.control_device(self._topic, "on", self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Instruct the cover to close."""
-        if await self._api.control_device(self._topic, "off", self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        await self._api.control_device(self._topic, "off", self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Instruct the cover to stop."""
-        if await self._api.control_device(self._topic, "stop", self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        await self._api.control_device(self._topic, "stop", self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     @property
     def device_info(self):
@@ -122,9 +131,6 @@ class BeHomeCover(CoordinatorEntity, CoverEntity):
             # Normalize the string to 'NFKC' form to clean up potential issues
             normalized_room_name = unicodedata.normalize("NFKC", room_name).strip()
             device_info["suggested_area"] = normalized_room_name
-            _LOGGER.debug(
-                f"Device '{self.name}' original room: '{room_name}', "
-                f"suggesting area: '{normalized_room_name}'"
-            )
+            pass
         
         return device_info

@@ -1,5 +1,4 @@
 """Platform for sensor integration."""
-import logging
 import unicodedata
 from typing import Any, Dict
 
@@ -21,7 +20,6 @@ from homeassistant.const import (
 
 from .const import DOMAIN, DEVICE_TYPE_SENSOR
 
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -94,6 +92,16 @@ class BeHomeSensor(CoordinatorEntity, SensorEntity):
             self._attr_icon = "mdi:eye"
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        if not device:
+            return False
+        return device.get("num", False)
+
+    @property
     def native_value(self):
         """Return the state of the sensor."""
         device = next(
@@ -116,9 +124,6 @@ class BeHomeSensor(CoordinatorEntity, SensorEntity):
             # Normalize the string to 'NFKC' form to clean up potential issues
             normalized_room_name = unicodedata.normalize("NFKC", room_name).strip()
             device_info["suggested_area"] = normalized_room_name
-            _LOGGER.debug(
-                f"Device '{self.name}' original room: '{room_name}', "
-                f"suggesting area: '{normalized_room_name}'"
-            )
+            pass
         
         return device_info

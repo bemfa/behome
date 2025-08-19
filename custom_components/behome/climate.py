@@ -1,5 +1,5 @@
 """Platform for climate integration."""
-import logging
+import asyncio
 import unicodedata
 from typing import Any, Dict, List
 
@@ -21,7 +21,6 @@ from homeassistant.const import UnitOfTemperature
 from .const import DOMAIN, DEVICE_TYPE_CLIMATE, DEVICE_TYPE_THERMOSTAT
 from .api import BemfaAPI
 
-_LOGGER = logging.getLogger(__name__)
 
 HA_STATE_TO_BEMFA = {
     HVACMode.OFF: "off",
@@ -95,6 +94,16 @@ class BeHomeClimate(CoordinatorEntity, ClimateEntity):
         self._attr_target_temperature_step = 1
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        if not device:
+            return False
+        return device.get("num", False)
+
+    @property
     def _current_device_state_parts(self) -> List[str]:
         """Get the latest state for this device, split by comma."""
         device = next(
@@ -135,8 +144,8 @@ class BeHomeClimate(CoordinatorEntity, ClimateEntity):
 
     async def _send_command(self, msg: str):
         """Send a command to the climate device."""
-        if await self._api.control_device(self._topic, msg, self._device["type"]):
-            await self.coordinator.async_request_refresh()
+        await self._api.control_device(self._topic, msg, self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
@@ -186,9 +195,6 @@ class BeHomeClimate(CoordinatorEntity, ClimateEntity):
             # Normalize the string to 'NFKC' form to clean up potential issues
             normalized_room_name = unicodedata.normalize("NFKC", room_name).strip()
             device_info["suggested_area"] = normalized_room_name
-            _LOGGER.debug(
-                f"Device '{self.name}' original room: '{room_name}', "
-                f"suggesting area: '{normalized_room_name}'"
-            )
+            pass
         
         return device_info
