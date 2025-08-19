@@ -1,7 +1,6 @@
 {
   "name": "BeHome",
   "hacs": "1.0.0",
-  "domains": ["switch", "light", "fan", "sensor", "climate", "cover", "water_heater", "media_player", "air_purifier"],
   "homeassistant": "2024.4.0",
   "render_readme": true
 }
