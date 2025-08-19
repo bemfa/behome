@@ -1,4 +1,5 @@
 """Config flow for BeHome integration."""
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -13,6 +14,22 @@ from .const import (
     OAUTH2_AUTHORIZE_URL,
     OAUTH2_TOKEN_URL,
 )
+
+
+class DummyLogger:
+    """A dummy logger that does nothing."""
+    
+    def debug(self, *args, **kwargs):
+        pass
+    
+    def info(self, *args, **kwargs):
+        pass
+    
+    def warning(self, *args, **kwargs):
+        pass
+    
+    def error(self, *args, **kwargs):
+        pass
 
 
 @config_entries.HANDLERS.register(DOMAIN)
@@ -38,6 +55,11 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
             )
         ]
 
+
+    @property
+    def logger(self):
+        """Return a dummy logger."""
+        return DummyLogger()
 
     async def async_oauth_create_entry(self, data: dict) -> dict:
         """Create an entry for the flow after successful authorization."""
