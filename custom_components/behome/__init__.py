@@ -6,7 +6,7 @@ import time
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_entry_oauth2_flow, area_registry
+from homeassistant.helpers import config_entry_oauth2_flow, area_registry, config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -21,6 +21,9 @@ from .const import (
 from .api import BemfaAPI
 
 SCAN_INTERVAL = timedelta(seconds=5)
+
+# This integration can only be configured via config entries
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 class DummyLogger:
