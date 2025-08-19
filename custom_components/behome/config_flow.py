@@ -86,7 +86,8 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Handle the OAuth2 flow."""
-        return await self.async_step_pick_implementation()
+        # For single OAuth implementation, use the inherited OAuth flow
+        return await super().async_step_user(user_input)
 
     async def async_step_manual(
         self, user_input: dict[str, Any] | None = None
