@@ -57,8 +57,6 @@ async def async_setup_entry(
 class BeHomeLight(CoordinatorEntity, LightEntity):
     """Representation of a BeHome Light."""
     _attr_icon = "mdi:lightbulb"
-    _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
-    _attr_color_mode = ColorMode.BRIGHTNESS
 
     def __init__(self, coordinator, api: BemfaAPI, device: Dict[str, Any]):
         """Initialize the light."""
@@ -68,6 +66,27 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
         self._topic = device["topic"]
         self._attr_name = device.get("name", self._topic)
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
+
+    def _supports_brightness(self) -> bool:
+        """Check if device supports brightness adjustment."""
+        device = next(
+            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+        )
+        if not device:
+            return False
+        return device.get("attr1") is True
+
+    @property
+    def supported_color_modes(self) -> set[ColorMode]:
+        """Return supported color modes."""
+        if self._supports_brightness():
+            return {ColorMode.BRIGHTNESS}
+        return {ColorMode.ONOFF}
+
+    @property
+    def color_mode(self) -> ColorMode:
+        """Return the color mode of the light."""
+        return ColorMode.BRIGHTNESS if self._supports_brightness() else ColorMode.ONOFF
 
     @property
     def is_on(self) -> bool:
@@ -98,6 +117,9 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
     @property
     def brightness(self) -> int | None:
         """Return the brightness of the light."""
+        if not self._supports_brightness():
+            return None
+            
         device = next(
             (d for d in self.coordinator.data if d["topic"] == self._topic), None
         )
@@ -105,41 +127,64 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
             return None
 
         msg = device.get("msg")
-        brightness_val = None
-
+        
         if isinstance(msg, dict):
-            # New JSON format: {"on": true, "brightness": 80}
-            if msg.get("on") and "brightness" in msg:
+            # Check if device is on
+            if not msg.get("on"):
+                return 0
+                
+            # If device has bri field, use it
+            if "bri" in msg:
                 try:
-                    brightness_val = int(msg["brightness"])
+                    bri_val = int(msg["bri"])
+                    return int(bri_val / 100 * 255)
                 except (ValueError, TypeError):
                     pass
-        elif isinstance(msg, str) and msg.startswith("on,"):
-            # Old string format: "on,80"
-            try:
-                brightness_val = int(msg.split(",")[1])
-            except (ValueError, IndexError):
-                pass
-        
-        if brightness_val is not None:
-            return int(brightness_val / 100 * 255)
+            
+            # If device is on but no bri field, return 100%
+            return 255
+        elif isinstance(msg, str):
+            if msg == "off":
+                return 0
+            elif msg.startswith("on,"):
+                # Old string format: "on,80"
+                try:
+                    bri_val = int(msg.split(",")[1])
+                    return int(bri_val / 100 * 255)
+                except (ValueError, IndexError):
+                    return 255
+            elif msg == "on":
+                return 255
             
         return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Instruct the light to turn on."""
         brightness = kwargs.get(ATTR_BRIGHTNESS)
-        msg = f"set,{int(brightness / 255 * 100)}" if brightness is not None else "on"
         
-        # Update local state immediately
-        if brightness is not None:
+        if self._supports_brightness() and brightness is not None:
+            # Device supports brightness and brightness was specified
+            bri_val = int(brightness / 255 * 100)
+            msg = f"set,{bri_val}"
+            
+            # Update local state immediately
             self.coordinator.update_device_state_immediately(self._topic, {
-                "msg": {"on": True, "brightness": int(brightness / 255 * 100)}
+                "msg": {"on": True, "bri": bri_val}
             })
         else:
-            self.coordinator.update_device_state_immediately(self._topic, {
-                "msg": {"on": True}
-            })
+            # Simple on command
+            msg = "on"
+            
+            # Update local state immediately
+            if self._supports_brightness():
+                # If supports brightness but no brightness specified, set to 100%
+                self.coordinator.update_device_state_immediately(self._topic, {
+                    "msg": {"on": True}
+                })
+            else:
+                self.coordinator.update_device_state_immediately(self._topic, {
+                    "msg": {"on": True}
+                })
         
         await self._api.control_device(self._topic, msg, self._device["type"])
         asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
@@ -147,9 +192,14 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Instruct the light to turn off."""
         # Update local state immediately
-        self.coordinator.update_device_state_immediately(self._topic, {
-            "msg": {"on": False}
-        })
+        if self._supports_brightness():
+            self.coordinator.update_device_state_immediately(self._topic, {
+                "msg": {"on": False, "bri": 0}
+            })
+        else:
+            self.coordinator.update_device_state_immediately(self._topic, {
+                "msg": {"on": False}
+            })
         
         await self._api.control_device(self._topic, "off", self._device["type"])
         asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
