@@ -1,6 +1,6 @@
 {
   "name": "BeHome",
-  "hacs": "1.0.0",
+  "hacs": "1.0.3",
   "homeassistant": "2024.4.0",
   "render_readme": true
 }
