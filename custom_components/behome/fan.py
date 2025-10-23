@@ -33,22 +33,31 @@ async def async_setup_entry(
     api: BemfaAPI = domain_data["api"]
     coordinator = domain_data["coordinator"]
 
+    # Track already added device IDs
+    added_device_ids = set()
+
     @callback
     def _async_discover_entities():
         """Discover and add new entities."""
         if not coordinator.data:
             return
-        
+
         devices = coordinator.data
         fan_devices = [
             device for device in devices if device["id"] == DEVICE_TYPE_FAN
         ]
 
+        # Only create entities for new devices
         new_fans = [
-            BeHomeFan(coordinator, api, device) for device in fan_devices
+            BeHomeFan(coordinator, api, device)
+            for device in fan_devices
+            if device["deviceID"] not in added_device_ids
         ]
-        
+
         if new_fans:
+            # Track the new device IDs
+            for fan in new_fans:
+                added_device_ids.add(fan._device_id)
             async_add_entities(new_fans)
 
     config_entry.async_on_unload(
@@ -60,7 +69,11 @@ async def async_setup_entry(
 class BeHomeFan(CoordinatorEntity, FanEntity):
     """Representation of a BeHome Fan."""
     _attr_icon = "mdi:fan"
-    _attr_supported_features = FanEntityFeature.SET_SPEED
+    _attr_supported_features = (
+        FanEntityFeature.SET_SPEED |
+        FanEntityFeature.TURN_ON |
+        FanEntityFeature.TURN_OFF
+    )
 
     def __init__(self, coordinator, api: BemfaAPI, device: Dict[str, Any]):
         """Initialize the fan."""
@@ -68,6 +81,7 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
         self._api = api
         self._device = device
         self._topic = device["topic"]
+        self._device_id = device["deviceID"]
         self._attr_name = device.get("name", self._topic)
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
         self._attr_speed_count = len(range(*SPEED_RANGE)) + 1
@@ -76,7 +90,7 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
     def available(self) -> bool:
         """Return True if entity is available."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -86,15 +100,15 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
     def is_on(self) -> bool:
         """Return true if the fan is on."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
-        
+
         msg = device.get("msg")
         if isinstance(msg, dict):
             return msg.get("on") is True
-        
+
         # Fallback for older string-based states
         return isinstance(msg, str) and msg != "off"
 
@@ -102,7 +116,7 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
     def percentage(self) -> int | None:
         """Return the current speed percentage."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device or not self.is_on:
             return 0
@@ -131,7 +145,10 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
         return 66 if self.is_on else 0
 
     async def async_turn_on(
-        self, percentage: int | None = None, **kwargs: Any
+        self,
+        percentage: int | None = None,
+        preset_mode: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Turn on the fan."""
         if percentage is None:
@@ -141,6 +158,11 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the fan."""
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._device_id, {
+            "msg": {"on": False}
+        })
+
         await self._api.control_device(self._topic, "off", self._device["type"])
         asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
@@ -152,7 +174,12 @@ class BeHomeFan(CoordinatorEntity, FanEntity):
 
         speed_level = math.ceil(percentage_to_ranged_value(SPEED_RANGE, percentage))
         msg = f"speed,{speed_level}"
-        
+
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._device_id, {
+            "msg": {"on": True, "speed": speed_level}
+        })
+
         await self._api.control_device(self._topic, msg, self._device["type"])
         asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 

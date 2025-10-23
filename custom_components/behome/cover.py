@@ -1,5 +1,6 @@
 """Platform for cover integration."""
 import asyncio
+import json
 import unicodedata
 from typing import Any, Dict
 
@@ -28,22 +29,31 @@ async def async_setup_entry(
     api: BemfaAPI = domain_data["api"]
     coordinator = domain_data["coordinator"]
 
+    # Track already added device IDs
+    added_device_ids = set()
+
     @callback
     def _async_discover_entities():
         """Discover and add new entities."""
         if not coordinator.data:
             return
-        
+
         devices = coordinator.data
         cover_devices = [
             device for device in devices if device["id"] == DEVICE_TYPE_COVER
         ]
 
+        # Only create entities for new devices
         new_covers = [
-            BeHomeCover(coordinator, api, device) for device in cover_devices
+            BeHomeCover(coordinator, api, device)
+            for device in cover_devices
+            if device["deviceID"] not in added_device_ids
         ]
-        
+
         if new_covers:
+            # Track the new device IDs
+            for cover in new_covers:
+                added_device_ids.add(cover._device_id)
             async_add_entities(new_covers)
 
     config_entry.async_on_unload(
@@ -56,7 +66,10 @@ class BeHomeCover(CoordinatorEntity, CoverEntity):
     """Representation of a BeHome Cover."""
     _attr_device_class = CoverDeviceClass.CURTAIN
     _attr_supported_features = (
-        CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
+        CoverEntityFeature.OPEN |
+        CoverEntityFeature.CLOSE |
+        CoverEntityFeature.STOP |
+        CoverEntityFeature.SET_POSITION
     )
 
     def __init__(self, coordinator, api: BemfaAPI, device: Dict[str, Any]):
@@ -65,6 +78,7 @@ class BeHomeCover(CoordinatorEntity, CoverEntity):
         self._api = api
         self._device = device
         self._topic = device["topic"]
+        self._device_id = device["deviceID"]
         self._attr_name = device.get("name", self._topic)
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
 
@@ -72,7 +86,7 @@ class BeHomeCover(CoordinatorEntity, CoverEntity):
     def available(self) -> bool:
         """Return True if entity is available."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -82,13 +96,39 @@ class BeHomeCover(CoordinatorEntity, CoverEntity):
     def _current_device_state(self) -> str:
         """Get the latest state for this specific device from the coordinator."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         return device.get("state", "closed") if device else "closed"
 
     @property
+    def _current_device_msg(self) -> dict:
+        """Get the latest msg for this specific device from the coordinator."""
+        device = next(
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
+        )
+        msg = device.get("msg") if device else {}
+        return msg if isinstance(msg, dict) else {}
+
+    @property
+    def current_cover_position(self) -> int | None:
+        """Return current position of cover (0-100)."""
+        msg = self._current_device_msg
+        if msg and "v" in msg:
+            try:
+                return int(msg["v"])
+            except (ValueError, TypeError):
+                pass
+        # If no position info, return None (unknown position)
+        return None
+
+    @property
     def is_closed(self) -> bool | None:
         """Return if the cover is closed or not."""
+        # First check position if available
+        position = self.current_cover_position
+        if position is not None:
+            return position == 0
+        # Fall back to state check
         return self._current_device_state == "off"
 
     @property
@@ -103,17 +143,52 @@ class BeHomeCover(CoordinatorEntity, CoverEntity):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Instruct the cover to open."""
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._device_id, {
+            "state": "opening"
+        })
+
         await self._api.control_device(self._topic, "on", self._device["type"])
         asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Instruct the cover to close."""
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._device_id, {
+            "state": "closing"
+        })
+
         await self._api.control_device(self._topic, "off", self._device["type"])
         asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Instruct the cover to stop."""
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._device_id, {
+            "state": "stop"
+        })
+
         await self._api.control_device(self._topic, "stop", self._device["type"])
+        asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
+
+    async def async_set_cover_position(self, **kwargs: Any) -> None:
+        """Move the cover to a specific position (0-100)."""
+        position = kwargs.get("position")
+        if position is None:
+            return
+
+        # Clamp position to valid range
+        position = max(0, min(100, int(position)))
+
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._device_id, {
+            "msg": {"v": position},
+            "state": "opening" if position > (self.current_cover_position or 0) else "closing"
+        })
+
+        # Send position command in JSON format: {"on":true,"v":<position>}
+        msg = json.dumps({"on": True, "v": position})
+        await self._api.control_device(self._topic, msg, self._device["type"])
         asyncio.create_task(self.coordinator.async_request_refresh_after_delay(3.0))
 
     @property

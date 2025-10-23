@@ -28,6 +28,9 @@ async def async_setup_entry(
     api: BemfaAPI = domain_data["api"]
     coordinator = domain_data["coordinator"]
 
+    # Track already added device IDs
+    added_device_ids = set()
+
     @callback
     def _async_discover_entities():
         """Discover and add new entities."""
@@ -42,10 +45,15 @@ async def async_setup_entry(
         # Create entities for all discovered devices.
         # Home Assistant will handle matching them to existing entities.
         new_lights = [
-            BeHomeLight(coordinator, api, device) for device in light_devices
+            BeHomeLight(coordinator, api, device)
+            for device in light_devices
+            if device["deviceID"] not in added_device_ids
         ]
-        
+
         if new_lights:
+            # Track the new device IDs
+            for entity in new_lights:
+                added_device_ids.add(entity._device_id)
             async_add_entities(new_lights)
 
     config_entry.async_on_unload(
@@ -64,13 +72,14 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
         self._api = api
         self._device = device
         self._topic = device["topic"]
+        self._device_id = device["deviceID"]
         self._attr_name = device.get("name", self._topic)
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
 
     def _supports_brightness(self) -> bool:
         """Check if device supports brightness adjustment."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -92,7 +101,7 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
     def is_on(self) -> bool:
         """Return true if the light is on."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -108,7 +117,7 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
     def available(self) -> bool:
         """Return True if entity is available."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -121,7 +130,7 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
             return None
             
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return None
@@ -168,7 +177,7 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
             msg = f"set,{bri_val}"
             
             # Update local state immediately
-            self.coordinator.update_device_state_immediately(self._topic, {
+            self.coordinator.update_device_state_immediately(self._device_id, {
                 "msg": {"on": True, "bri": bri_val}
             })
         else:
@@ -178,11 +187,11 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
             # Update local state immediately
             if self._supports_brightness():
                 # If supports brightness but no brightness specified, set to 100%
-                self.coordinator.update_device_state_immediately(self._topic, {
+                self.coordinator.update_device_state_immediately(self._device_id, {
                     "msg": {"on": True}
                 })
             else:
-                self.coordinator.update_device_state_immediately(self._topic, {
+                self.coordinator.update_device_state_immediately(self._device_id, {
                     "msg": {"on": True}
                 })
         
@@ -193,11 +202,11 @@ class BeHomeLight(CoordinatorEntity, LightEntity):
         """Instruct the light to turn off."""
         # Update local state immediately
         if self._supports_brightness():
-            self.coordinator.update_device_state_immediately(self._topic, {
+            self.coordinator.update_device_state_immediately(self._device_id, {
                 "msg": {"on": False, "bri": 0}
             })
         else:
-            self.coordinator.update_device_state_immediately(self._topic, {
+            self.coordinator.update_device_state_immediately(self._device_id, {
                 "msg": {"on": False}
             })
         

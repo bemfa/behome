@@ -28,6 +28,9 @@ async def async_setup_entry(
     api: BemfaAPI = domain_data["api"]
     coordinator = domain_data["coordinator"]
 
+    # Track already added device IDs
+    added_device_ids = set()
+
     @callback
     def _async_discover_entities():
         """Discover and add new entities."""
@@ -40,10 +43,15 @@ async def async_setup_entry(
         ]
 
         new_mps = [
-            BeHomeMediaPlayer(coordinator, api, device) for device in mp_devices
+            BeHomeMediaPlayer(coordinator, api, device)
+            for device in mp_devices
+            if device["deviceID"] not in added_device_ids
         ]
-        
+
         if new_mps:
+            # Track the new device IDs
+            for entity in new_mps:
+                added_device_ids.add(entity._device_id)
             async_add_entities(new_mps)
 
     config_entry.async_on_unload(
@@ -60,6 +68,7 @@ class BeHomeMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         super().__init__(coordinator)
         self._api = api
         self._topic = device["topic"]
+        self._device_id = device["deviceID"]
         self._device = device # Store device object
         self._attr_name = device.get("name", self._topic)
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
@@ -76,7 +85,7 @@ class BeHomeMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
     def available(self) -> bool:
         """Return True if entity is available."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -86,7 +95,7 @@ class BeHomeMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
     def _current_device_state(self) -> str:
         """Get the latest state for this specific device from the coordinator."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         return device.get("state", "off") if device else "off"
 

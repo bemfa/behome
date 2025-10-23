@@ -28,6 +28,9 @@ async def async_setup_entry(
     api: BemfaAPI = domain_data["api"]
     coordinator = domain_data["coordinator"]
 
+    # Track already added device IDs
+    added_device_ids = set()
+
     @callback
     def _async_discover_entities():
         """Discover and add new entities."""
@@ -40,10 +43,15 @@ async def async_setup_entry(
         ]
 
         new_aps = [
-            BeHomeAirPurifier(coordinator, api, device) for device in ap_devices
+            BeHomeAirPurifier(coordinator, api, device)
+            for device in ap_devices
+            if device["deviceID"] not in added_device_ids
         ]
-        
+
         if new_aps:
+            # Track the new device IDs
+            for entity in new_aps:
+                added_device_ids.add(entity._device_id)
             async_add_entities(new_aps)
 
     config_entry.async_on_unload(
@@ -64,6 +72,7 @@ class BeHomeAirPurifier(CoordinatorEntity, AirPurifierEntity):
         self._api = api
         self._device = device
         self._topic = device["topic"]
+        self._device_id = device["deviceID"]
         self._attr_name = device.get("name", self._topic)
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
 
@@ -71,7 +80,7 @@ class BeHomeAirPurifier(CoordinatorEntity, AirPurifierEntity):
     def available(self) -> bool:
         """Return True if entity is available."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -81,7 +90,7 @@ class BeHomeAirPurifier(CoordinatorEntity, AirPurifierEntity):
     def _current_device_state_parts(self) -> list[str]:
         """Get the latest state for this device, split by comma."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         return device.get("state", "").split(",") if device else []
 

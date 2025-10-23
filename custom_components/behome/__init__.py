@@ -1,6 +1,5 @@
 """The BeHome integration."""
 import asyncio
-import logging
 from datetime import timedelta
 import time
 
@@ -52,23 +51,23 @@ class SmartDataUpdateCoordinator(DataUpdateCoordinator):
         super().__init__(*args, **kwargs)
         self._last_manual_refresh = 0
         self._manual_refresh_cooldown = 8  # Increased to 8 seconds
-        self._locked_devices = {}  # topic -> lock_end_time
+        self._locked_devices = {}  # deviceID -> lock_end_time
         self._device_lock_duration = 5  # Lock device state for 5 seconds
-        
-    def update_device_state_immediately(self, topic: str, new_state: dict):
+
+    def update_device_state_immediately(self, device_id: str, new_state: dict):
         """Update device state immediately in local cache and lock it."""
         if not self.data:
             return
-            
+
         # Lock this device state to prevent overwrite by polling
-        self._locked_devices[topic] = time.time() + self._device_lock_duration
-            
+        self._locked_devices[device_id] = time.time() + self._device_lock_duration
+
         # Find and update the device in the cached data
         for device in self.data:
-            if device.get("topic") == topic:
+            if device.get("deviceID") == device_id:
                 device.update(new_state)
                 break
-        
+
         # Notify all listeners about the state change
         self.async_update_listeners()
         
@@ -99,11 +98,11 @@ class SmartDataUpdateCoordinator(DataUpdateCoordinator):
             # Restore locked device states
             if self.data and self._locked_devices:
                 for device in new_data:
-                    topic = device.get("topic")
-                    if topic in self._locked_devices:
+                    device_id = device.get("deviceID")
+                    if device_id in self._locked_devices:
                         # Find the locked state from current data
                         for old_device in self.data:
-                            if old_device.get("topic") == topic:
+                            if old_device.get("deviceID") == device_id:
                                 # Preserve the locked state
                                 device.update({
                                     "msg": old_device.get("msg"),

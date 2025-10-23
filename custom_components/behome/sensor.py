@@ -32,12 +32,15 @@ async def async_setup_entry(
     domain_data = hass.data[DOMAIN][config_entry.entry_id]
     coordinator = domain_data["coordinator"]
 
+    # Track already added entity unique IDs (not device IDs, since one device can have multiple sensor entities)
+    added_unique_ids = set()
+
     @callback
     def _async_discover_entities():
         """Discover and add new entities."""
         if not coordinator.data:
             return
-        
+
         devices = coordinator.data
         sensor_devices = [
             device for device in devices if device["id"] == DEVICE_TYPE_SENSOR
@@ -50,21 +53,42 @@ async def async_setup_entry(
                 msg = device["msg"]
                 # Create separate entities for each sensor type
                 if "t" in msg:
-                    new_sensors.append(BeHomeSensor(coordinator, device, "temperature"))
+                    unique_id = f"{DOMAIN}_{device['deviceID']}_temperature"
+                    if unique_id not in added_unique_ids:
+                        new_sensors.append(BeHomeSensor(coordinator, device, "temperature"))
+                        added_unique_ids.add(unique_id)
                 if "h" in msg:
-                    new_sensors.append(BeHomeSensor(coordinator, device, "humidity"))
+                    unique_id = f"{DOMAIN}_{device['deviceID']}_humidity"
+                    if unique_id not in added_unique_ids:
+                        new_sensors.append(BeHomeSensor(coordinator, device, "humidity"))
+                        added_unique_ids.add(unique_id)
                 if "air" in msg:
-                    new_sensors.append(BeHomeSensor(coordinator, device, "air_quality"))
+                    unique_id = f"{DOMAIN}_{device['deviceID']}_air_quality"
+                    if unique_id not in added_unique_ids:
+                        new_sensors.append(BeHomeSensor(coordinator, device, "air_quality"))
+                        added_unique_ids.add(unique_id)
                 if "pm25" in msg:
-                    new_sensors.append(BeHomeSensor(coordinator, device, "pm25"))
+                    unique_id = f"{DOMAIN}_{device['deviceID']}_pm25"
+                    if unique_id not in added_unique_ids:
+                        new_sensors.append(BeHomeSensor(coordinator, device, "pm25"))
+                        added_unique_ids.add(unique_id)
                 if "co2" in msg:
-                    new_sensors.append(BeHomeSensor(coordinator, device, "co2"))
+                    unique_id = f"{DOMAIN}_{device['deviceID']}_co2"
+                    if unique_id not in added_unique_ids:
+                        new_sensors.append(BeHomeSensor(coordinator, device, "co2"))
+                        added_unique_ids.add(unique_id)
                 if "pa" in msg:
-                    new_sensors.append(BeHomeSensor(coordinator, device, "pressure"))
+                    unique_id = f"{DOMAIN}_{device['deviceID']}_pressure"
+                    if unique_id not in added_unique_ids:
+                        new_sensors.append(BeHomeSensor(coordinator, device, "pressure"))
+                        added_unique_ids.add(unique_id)
             else:
                 # Single sensor entity for other types
-                new_sensors.append(BeHomeSensor(coordinator, device))
-        
+                unique_id = f"{DOMAIN}_{device['deviceID']}"
+                if unique_id not in added_unique_ids:
+                    new_sensors.append(BeHomeSensor(coordinator, device))
+                    added_unique_ids.add(unique_id)
+
         if new_sensors:
             async_add_entities(new_sensors)
 
@@ -83,6 +107,7 @@ class BeHomeSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._device = device
         self._topic = device["topic"]
+        self._device_id = device["deviceID"]
         self._sensor_type = sensor_type
         
         # Set name and unique ID based on sensor type
@@ -149,7 +174,7 @@ class BeHomeSensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         """Return True if entity is available."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -159,7 +184,7 @@ class BeHomeSensor(CoordinatorEntity, SensorEntity):
     def native_value(self):
         """Return the state of the sensor."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return None

@@ -23,16 +23,12 @@ class BemfaAPI:
             response = await self._session.get(API_DEVICE_LIST_URL, params=params)
             response.raise_for_status()
             data = await response.json()
-            pass
             if data.get("code") == 0:
                 return data.get("data", {}).get("array", [])
-            pass
             return []
-        except httpx.RequestError as err:
-            pass
+        except httpx.RequestError:
             return []
-        except Exception as err:
-            pass
+        except Exception:
             return []
 
     async def control_device(self, topic: str, message: str, device_type: int) -> bool:
@@ -48,7 +44,7 @@ class BemfaAPI:
             # Handle brightness/temperature/speed settings
             parts = message.split(",")
             value = int(parts[1])
-            
+
             if len(parts) == 2:
                 # Simple brightness for light: "set,80" -> {"on":true,"bri":80}
                 cmd_message = {"on": True, "bri": value}
@@ -58,7 +54,7 @@ class BemfaAPI:
                 mode_str = parts[2]
                 # Convert mode string to int according to documentation
                 mode_map = {
-                    "auto": 1, "cool": 2, "heat": 3, "fan": 4, 
+                    "auto": 1, "cool": 2, "heat": 3, "fan": 4,
                     "dry": 5, "sleep": 6, "eco": 7
                 }
                 mode = mode_map.get(mode_str, 1)  # Default to auto
@@ -99,14 +95,10 @@ class BemfaAPI:
             response.raise_for_status()
             data = await response.json()
             if data.get("code") == 0:
-                pass
                 return True
             else:
-                pass
                 return False
-        except httpx.RequestError as err:
-            pass
+        except httpx.RequestError:
             return False
-        except Exception as err:
-            pass
+        except Exception:
             return False

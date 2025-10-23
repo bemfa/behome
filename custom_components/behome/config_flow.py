@@ -1,5 +1,4 @@
 """Config flow for BeHome integration."""
-import logging
 from typing import Any
 
 import voluptuous as vol
@@ -67,7 +66,7 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         if len(access_token) > 8:  # Need at least 9 characters to remove first 4 and last 4
             private_key = access_token[4:-4]  # Remove first 4 and last 4 characters
         else:
-            self.logger.error("Received access token is too short.")
+            # Token too short
             return self.async_abort(reason="invalid_token")
 
         data[CONF_PRIVATE_KEY] = private_key

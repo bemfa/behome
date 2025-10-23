@@ -24,14 +24,17 @@ async def async_setup_entry(
     api: BemfaAPI = domain_data["api"]
     coordinator = domain_data["coordinator"]
 
+    # Track already added device IDs
+    added_device_ids = set()
+
     @callback
     def _async_discover_entities():
         """Discover and add new entities."""
         if not coordinator.data:
             return
-        
+
         devices = coordinator.data
-        
+
         # Separate devices into sockets and switches
         socket_devices = [
             device for device in devices if device["id"] == DEVICE_TYPE_SOCKET
@@ -41,21 +44,19 @@ async def async_setup_entry(
         ]
 
         new_entities = []
-        
+
         # Create socket entities
-        new_sockets = [
-            BeHomeSocket(coordinator, api, device) for device in socket_devices
-        ]
-        if new_sockets:
-            new_entities.extend(new_sockets)
+        for device in socket_devices:
+            if device["deviceID"] not in added_device_ids:
+                new_entities.append(BeHomeSocket(coordinator, api, device))
+                added_device_ids.add(device["deviceID"])
 
         # Create generic switch entities
-        new_switches = [
-            BeHomeSwitch(coordinator, api, device) for device in switch_devices
-        ]
-        if new_switches:
-            new_entities.extend(new_switches)
-        
+        for device in switch_devices:
+            if device["deviceID"] not in added_device_ids:
+                new_entities.append(BeHomeSwitch(coordinator, api, device))
+                added_device_ids.add(device["deviceID"])
+
         if new_entities:
             async_add_entities(new_entities)
 
@@ -77,6 +78,7 @@ class BeHomeSwitch(CoordinatorEntity, SwitchEntity):
         self._api = api
         self._device = device
         self._topic = device["topic"]
+        self._device_id = device["deviceID"]
         self._attr_name = device.get("name", self._topic)
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
 
@@ -84,7 +86,7 @@ class BeHomeSwitch(CoordinatorEntity, SwitchEntity):
     def available(self) -> bool:
         """Return True if entity is available."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -94,7 +96,7 @@ class BeHomeSwitch(CoordinatorEntity, SwitchEntity):
     def is_on(self) -> bool:
         """Return true if the switch is on."""
         device = next(
-            (d for d in self.coordinator.data if d["topic"] == self._topic), None
+            (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
         if not device:
             return False
@@ -109,7 +111,7 @@ class BeHomeSwitch(CoordinatorEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Instruct the switch to turn on."""
         # Update local state immediately
-        self.coordinator.update_device_state_immediately(self._topic, {
+        self.coordinator.update_device_state_immediately(self._device_id, {
             "msg": {"on": True}
         })
         
@@ -119,7 +121,7 @@ class BeHomeSwitch(CoordinatorEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Instruct the switch to turn off."""
         # Update local state immediately
-        self.coordinator.update_device_state_immediately(self._topic, {
+        self.coordinator.update_device_state_immediately(self._device_id, {
             "msg": {"on": False}
         })
         
