@@ -7,10 +7,8 @@ from homeassistant.components.climate import (
     ClimateEntity,
     ClimateEntityFeature,
     HVACMode,
-    FAN_AUTO,
-    FAN_LOW,
-    FAN_MEDIUM,
-    FAN_HIGH,
+    PRESET_SLEEP,
+    PRESET_ECO,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -21,22 +19,24 @@ from homeassistant.const import UnitOfTemperature
 from .const import DOMAIN, DEVICE_TYPE_CLIMATE, DEVICE_TYPE_THERMOSTAT
 from .api import BemfaAPI
 
-
-HA_STATE_TO_BEMFA = {
-    HVACMode.OFF: "off",
-    HVACMode.COOL: "cool",
-    HVACMode.HEAT: "heat",
-    HVACMode.FAN_ONLY: "fan",
+# Map Bemfa mode numbers to Home Assistant HVAC modes
+MODE_TO_HVAC = {
+    1: HVACMode.AUTO,      # 自动
+    2: HVACMode.COOL,      # 制冷
+    3: HVACMode.HEAT,      # 制热
+    4: HVACMode.FAN_ONLY,  # 送风
+    5: HVACMode.DRY,       # 除湿
 }
-BEMFA_TO_HA_STATE = {v: k for k, v in HA_STATE_TO_BEMFA.items()}
 
-HA_FAN_MODE_TO_BEMFA = {
-    FAN_AUTO: "auto",
-    FAN_LOW: "low",
-    FAN_MEDIUM: "medium",
-    FAN_HIGH: "high",
+HVAC_TO_MODE = {v: k for k, v in MODE_TO_HVAC.items()}
+
+# Presets for sleep and eco modes
+PRESET_TO_MODE = {
+    PRESET_SLEEP: 6,  # 睡眠
+    PRESET_ECO: 7,    # 节能
 }
-BEMFA_FAN_MODE_TO_HA = {v: k for k, v in HA_FAN_MODE_TO_BEMFA.items()}
+
+MODE_TO_PRESET = {v: k for k, v in PRESET_TO_MODE.items()}
 
 
 async def async_setup_entry(
@@ -95,10 +95,18 @@ class BeHomeClimate(CoordinatorEntity, ClimateEntity):
         self._attr_unique_id = f"{DOMAIN}_{device['deviceID']}"
         self._attr_icon = "mdi:thermostat"
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
-        self._attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY]
-        self._attr_fan_modes = [FAN_AUTO, FAN_LOW, FAN_MEDIUM, FAN_HIGH]
+        self._attr_hvac_modes = [
+            HVACMode.OFF,
+            HVACMode.AUTO,
+            HVACMode.COOL,
+            HVACMode.HEAT,
+            HVACMode.FAN_ONLY,
+            HVACMode.DRY,
+        ]
+        self._attr_preset_modes = [PRESET_SLEEP, PRESET_ECO]
         self._attr_supported_features = (
-            ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.FAN_MODE
+            ClimateEntityFeature.TARGET_TEMPERATURE |
+            ClimateEntityFeature.PRESET_MODE
         )
         self._attr_target_temperature_step = 1
 
@@ -113,21 +121,35 @@ class BeHomeClimate(CoordinatorEntity, ClimateEntity):
         return device.get("num", False)
 
     @property
-    def _current_device_state_parts(self) -> List[str]:
-        """Get the latest state for this device, split by comma."""
+    def _current_device_msg(self) -> dict:
+        """Get the latest msg for this device from the coordinator."""
         device = next(
             (d for d in self.coordinator.data if d["deviceID"] == self._device_id), None
         )
-        return device.get("state", "").split(",") if device else []
+        msg = device.get("msg") if device else {}
+        return msg if isinstance(msg, dict) else {}
 
     @property
     def hvac_mode(self) -> HVACMode | None:
         """Return current hvac mode."""
-        parts = self._current_device_state_parts
-        if not parts or parts[0] == "off":
+        msg = self._current_device_msg
+
+        # Check if device is on
+        if not msg.get("on"):
             return HVACMode.OFF
-        
-        return BEMFA_TO_HA_STATE.get(parts[2]) if len(parts) > 2 else HVACMode.FAN_ONLY
+
+        # Get mode number from msg
+        mode_num = msg.get("mode")
+        if mode_num is None:
+            return HVACMode.AUTO  # Default
+
+        # Check if it's a preset mode (sleep or eco)
+        if mode_num in MODE_TO_PRESET:
+            # Return the base hvac mode (auto) when in preset mode
+            return HVACMode.AUTO
+
+        # Map mode number to HVAC mode
+        return MODE_TO_HVAC.get(mode_num, HVACMode.AUTO)
 
     @property
     def current_temperature(self) -> float | None:
@@ -137,19 +159,20 @@ class BeHomeClimate(CoordinatorEntity, ClimateEntity):
     @property
     def target_temperature(self) -> float | None:
         """Return the temperature we try to reach."""
-        parts = self._current_device_state_parts
-        if len(parts) > 1 and parts[0] != "off":
+        msg = self._current_device_msg
+        if msg.get("on") and "t" in msg:
             try:
-                return float(parts[1])
-            except (ValueError, IndexError):
+                return float(msg["t"])
+            except (ValueError, TypeError):
                 pass
         return None
 
     @property
-    def fan_mode(self) -> str | None:
-        """Return the fan setting."""
-        parts = self._current_device_state_parts
-        return BEMFA_FAN_MODE_TO_HA.get(parts[3]) if len(parts) > 3 else None
+    def preset_mode(self) -> str | None:
+        """Return the current preset mode."""
+        msg = self._current_device_msg
+        mode_num = msg.get("mode")
+        return MODE_TO_PRESET.get(mode_num)
 
     async def _send_command(self, msg: str):
         """Send a command to the climate device."""
@@ -159,34 +182,56 @@ class BeHomeClimate(CoordinatorEntity, ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
         if hvac_mode == HVACMode.OFF:
+            # Update local state immediately
+            self.coordinator.update_device_state_immediately(self._device_id, {
+                "msg": {"on": False}
+            })
             await self._send_command("off")
         else:
             temp = self.target_temperature or 25
-            fan = self.fan_mode or FAN_AUTO
-            mode_bemfa = HA_STATE_TO_BEMFA.get(hvac_mode, "cool")
-            fan_bemfa = HA_FAN_MODE_TO_BEMFA.get(fan, "auto")
-            await self._send_command(f"set,{int(temp)},{mode_bemfa},{fan_bemfa}")
+            mode_num = HVAC_TO_MODE.get(hvac_mode, 1)  # Default to auto
+
+            # Update local state immediately
+            self.coordinator.update_device_state_immediately(self._device_id, {
+                "msg": {"on": True, "t": int(temp), "mode": mode_num}
+            })
+
+            await self._send_command(f"set,{int(temp)},{['auto','cool','heat','fan','dry'][mode_num-1] if mode_num <= 5 else 'auto'},auto")
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
         temp = kwargs.get("temperature")
         if temp is None:
             return
-        
-        mode = self.hvac_mode if self.hvac_mode != HVACMode.OFF else HVACMode.COOL
-        mode_bemfa = HA_STATE_TO_BEMFA.get(mode, "cool")
-        fan_bemfa = HA_FAN_MODE_TO_BEMFA.get(self.fan_mode or FAN_AUTO, "auto")
-        await self._send_command(f"set,{int(temp)},{mode_bemfa},{fan_bemfa}")
 
-    async def async_set_fan_mode(self, fan_mode: str) -> None:
-        """Set new target fan mode."""
-        if self.hvac_mode == HVACMode.OFF:
+        # Get current mode or default to cool
+        current_mode = self.hvac_mode if self.hvac_mode != HVACMode.OFF else HVACMode.COOL
+        mode_num = HVAC_TO_MODE.get(current_mode, 2)  # Default to cool
+
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._device_id, {
+            "msg": {"on": True, "t": int(temp), "mode": mode_num}
+        })
+
+        mode_str = ['auto','cool','heat','fan','dry'][mode_num-1] if mode_num <= 5 else 'auto'
+        await self._send_command(f"set,{int(temp)},{mode_str},auto")
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Set new preset mode (sleep or eco)."""
+        mode_num = PRESET_TO_MODE.get(preset_mode)
+        if mode_num is None:
             return
 
         temp = self.target_temperature or 25
-        mode_bemfa = HA_STATE_TO_BEMFA.get(self.hvac_mode, "cool")
-        fan_bemfa = HA_FAN_MODE_TO_BEMFA.get(fan_mode, "auto")
-        await self._send_command(f"set,{int(temp)},{mode_bemfa},{fan_bemfa}")
+
+        # Update local state immediately
+        self.coordinator.update_device_state_immediately(self._device_id, {
+            "msg": {"on": True, "t": int(temp), "mode": mode_num}
+        })
+
+        # For sleep and eco modes, send with mode number
+        mode_str = ['auto','cool','heat','fan','dry','sleep','eco'][mode_num-1]
+        await self._send_command(f"set,{int(temp)},{mode_str},auto")
 
     @property
     def device_info(self):
