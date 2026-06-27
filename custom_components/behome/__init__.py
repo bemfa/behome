@@ -1,6 +1,8 @@
 """The BeHome integration."""
 import asyncio
 from datetime import timedelta
+import hashlib
+import logging
 import time
 
 from homeassistant.config_entries import ConfigEntry
@@ -20,28 +22,10 @@ from .const import (
 from .api import BemfaAPI
 
 SCAN_INTERVAL = timedelta(seconds=5)
+_LOGGER = logging.getLogger(__name__)
 
 # This integration can only be configured via config entries
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-
-
-class DummyLogger:
-    """A dummy logger that does nothing but satisfies the coordinator's requirements."""
-    
-    def isEnabledFor(self, level):
-        return False
-    
-    def debug(self, *args, **kwargs):
-        pass
-    
-    def info(self, *args, **kwargs):
-        pass
-    
-    def warning(self, *args, **kwargs):
-        pass
-    
-    def error(self, *args, **kwargs):
-        pass
 
 
 class SmartDataUpdateCoordinator(DataUpdateCoordinator):
@@ -123,7 +107,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         config_entry_oauth2_flow.LocalOAuth2Implementation(
             hass,
             DOMAIN,
-            "88ac425b4558463aa813aed1690db730",
+            OAUTH2_CLIENT_ID,
             "",
             OAUTH2_AUTHORIZE_URL,
             OAUTH2_TOKEN_URL,
@@ -140,20 +124,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     area_map = {area.name.lower(): area.id for area in ar.async_list_areas()}
     # --- End Area Registry Mapping ---
 
-    private_key = entry.data.get(CONF_PRIVATE_KEY)
-    
-    # Handle OAuth2 access_token: remove first 4 and last 4 characters to get real private key
+    private_key = _private_key_from_entry(entry)
     if not private_key:
-        access_token = entry.data["token"]["access_token"]
-        private_key = access_token[4:-4]
+        _LOGGER.error("BeHome config entry does not contain a valid private key")
+        return False
 
+    unique_id = _unique_id_from_private_key(private_key)
+    if entry.data.get(CONF_PRIVATE_KEY) != private_key or entry.unique_id != unique_id:
+        hass.config_entries.async_update_entry(
+            entry,
+            data={CONF_PRIVATE_KEY: private_key},
+            unique_id=unique_id,
+        )
 
     session = async_get_clientsession(hass)
     api = BemfaAPI(private_key, session)
 
     coordinator = SmartDataUpdateCoordinator(
         hass,
-        DummyLogger(),
+        _LOGGER,
         name="behome_devices",
         update_method=api.get_devices,
         update_interval=SCAN_INTERVAL,
@@ -177,3 +166,22 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
+
+
+def _private_key_from_entry(entry: ConfigEntry) -> str | None:
+    """Extract the private key from a current or legacy config entry."""
+    private_key = entry.data.get(CONF_PRIVATE_KEY)
+    if isinstance(private_key, str) and private_key:
+        return private_key
+
+    token = entry.data.get("token")
+    access_token = token.get("access_token") if isinstance(token, dict) else None
+    if isinstance(access_token, str) and len(access_token) > 8:
+        return access_token[4:-4]
+
+    return None
+
+
+def _unique_id_from_private_key(private_key: str) -> str:
+    """Return a stable, non-secret unique ID for a private key."""
+    return hashlib.sha256(private_key.encode("utf-8")).hexdigest()

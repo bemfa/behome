@@ -3,8 +3,9 @@
         "step": {
             "user": {
                 "title": "选择 BeHome 授权方式",
-                "description": "BeHome 设备可以通过两种不同的方式在 Home Assistant 中设置。\n\n您可以从您的 bemfa.com 账户导入它们或者手动输入用户私钥。",
+                "description": "BeHome 设备可以通过三种不同的方式在 Home Assistant 中设置。\n\n您可以使用微信扫码登录、从您的 bemfa.com 账户导入，或者手动输入用户私钥。",
                 "menu_options": {
+                    "wechat_scan": "微信扫码登录",
                     "oauth": "从 bemfa.com 导入 (推荐)",
                     "manual": "手动输入用户私钥"
                 }
@@ -16,8 +17,15 @@
                 }
             }
         },
+        "progress": {
+            "wechat_scan": "请使用微信扫描下方二维码。扫码成功后，此页面会自动继续。\n\n![微信扫码登录二维码]({qr_image})"
+        },
         "abort": {
             "invalid_token": "从巴法云获取的Token无效，无法提取私钥。",
+            "already_configured": "BeHome 已经配置过。如需重新配置，请先删除现有集成。",
+            "wechat_not_scanned": "微信扫码登录已超时，请重新扫码登录。",
+            "wechat_qr_failed": "微信登录二维码获取失败，请稍后重试。",
+            "wechat_login_failed": "微信登录失败，请稍后重试。",
             "reauth_successful": "重新授权成功！"
         },
         "error": {
