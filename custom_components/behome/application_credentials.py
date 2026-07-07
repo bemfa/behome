@@ -2,9 +2,17 @@ from homeassistant.components.application_credentials import AuthImplementation,
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_entry_oauth2_flow
 
+from .const import OAUTH2_CLIENT_ID
+
 
 class OAuth2Impl(AuthImplementation):
     """Custom OAuth2 implementation."""
+
+
+async def async_get_default_credentials(hass: HomeAssistant) -> ClientCredential:
+    """Return default credentials for BeHome OAuth."""
+
+    return ClientCredential(OAUTH2_CLIENT_ID, "behome")
 
 
 async def async_get_auth_implementation(
