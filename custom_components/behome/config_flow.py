@@ -9,16 +9,12 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     DOMAIN,
     CONF_PRIVATE_KEY,
-    OAUTH2_CLIENT_ID,
-    OAUTH2_AUTHORIZE_URL,
-    OAUTH2_TOKEN_URL,
     WECHAT_LOGIN_POLL_URL,
     WECHAT_QR_IMAGE_URL,
     WECHAT_QR_URL,
@@ -42,23 +38,6 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         self._wechat_sid: str | None = None
         self._wechat_qr_image_url: str | None = None
         self._wechat_login_task: asyncio.Task[str | None] | None = None
-
-    @staticmethod
-    def async_get_implementations(
-        hass: HomeAssistant,
-    ) -> list[config_entry_oauth2_flow.AbstractOAuth2Implementation]:
-        """Return a list of OAuth2 implementations."""
-        return [
-            config_entry_oauth2_flow.LocalOAuth2Implementation(
-                hass,
-                DOMAIN,
-                OAUTH2_CLIENT_ID,
-                "",
-                OAUTH2_AUTHORIZE_URL,
-                OAUTH2_TOKEN_URL,
-            )
-        ]
-
 
     @property
     def logger(self):
