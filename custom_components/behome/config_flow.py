@@ -56,21 +56,15 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Handle the initial step."""
-        if self._async_current_entries():
-            return self.async_abort(reason="already_configured")
-
         return self.async_show_menu(
             step_id="user",
-            menu_options=["wechat_scan", "oauth", "manual"],
+            menu_options=["wechat_scan", "manual", "oauth"],
         )
 
     async def async_step_wechat_scan(
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Handle WeChat QR code login."""
-        if self._async_current_entries():
-            return self.async_abort(reason="already_configured")
-
         if self._wechat_login_task and self._wechat_login_task.done():
             return self.async_show_progress_done(next_step_id="wechat_done")
 
@@ -112,9 +106,6 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Handle the OAuth2 flow."""
-        if self._async_current_entries():
-            return self.async_abort(reason="already_configured")
-
         # For single OAuth implementation, use the inherited OAuth flow
         return await super().async_step_user(user_input)
 
@@ -122,9 +113,6 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Handle the manual private key entry."""
-        if self._async_current_entries():
-            return self.async_abort(reason="already_configured")
-
         errors: dict[str, str] = {}
         if user_input is not None:
             private_key = str(user_input.get(CONF_PRIVATE_KEY, "")).strip()
