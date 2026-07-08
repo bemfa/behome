@@ -69,11 +69,9 @@ async def async_setup_entry(
 class BeHomeFan(CoordinatorEntity, FanEntity):
     """Representation of a BeHome Fan."""
     _attr_icon = "mdi:fan"
-    _attr_supported_features = (
-        FanEntityFeature.SET_SPEED |
-        FanEntityFeature.TURN_ON |
-        FanEntityFeature.TURN_OFF
-    )
+    _attr_supported_features = FanEntityFeature.SET_SPEED
+    if hasattr(FanEntityFeature, "TURN_ON"):
+        _attr_supported_features |= FanEntityFeature.TURN_ON | FanEntityFeature.TURN_OFF
 
     def __init__(self, coordinator, api: BemfaAPI, device: Dict[str, Any]):
         """Initialize the fan."""
