@@ -31,5 +31,27 @@
         "error": {
             "empty_key": "用户私钥不能为空。"
         }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "设备同步设置",
+                "description": "选择设备同步模式。自动模式会同步账号下所有支持的 BeHome 设备；手动模式会在下一步选择要同步的设备。",
+                "menu_options": {
+                    "auto_sync": "自动同步所有设备",
+                    "manual_devices": "手动选择同步设备"
+                }
+            },
+            "manual_devices": {
+                "title": "选择同步设备",
+                "description": "只选择需要从 BeHome 同步到 Home Assistant 的设备。未选择且此前由本集成创建的设备和实体会被删除；不选择任何设备时会删除本集成创建的所有设备和实体。",
+                "data": {
+                    "selected_devices": "手动同步设备"
+                }
+            }
+        },
+        "abort": {
+            "invalid_key": "当前配置项中没有有效的用户私钥，无法读取设备列表。"
+        }
     }
 }

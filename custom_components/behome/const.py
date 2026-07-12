@@ -44,3 +44,8 @@ DEVICE_TYPE_AIR_PURIFIER = "airpurifier"
 
 # Configuration
 CONF_PRIVATE_KEY = "private_key"
+CONF_SYNC_MODE = "sync_mode"
+CONF_SELECTED_DEVICES = "selected_devices"
+
+SYNC_MODE_AUTO = "auto"
+SYNC_MODE_MANUAL = "manual"

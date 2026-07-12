@@ -9,12 +9,24 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.core import callback
 from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
+from .api import BemfaAPI
 from .const import (
     DOMAIN,
     CONF_PRIVATE_KEY,
+    CONF_SELECTED_DEVICES,
+    CONF_SYNC_MODE,
+    SYNC_MODE_AUTO,
+    SYNC_MODE_MANUAL,
     WECHAT_LOGIN_POLL_URL,
     WECHAT_QR_IMAGE_URL,
     WECHAT_QR_URL,
@@ -33,6 +45,12 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
     DOMAIN = DOMAIN
     VERSION = 1
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry):
+        """Create the options flow."""
+        return BeHomeOptionsFlow(config_entry)
+
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._wechat_sid: str | None = None
@@ -50,7 +68,7 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         if not private_key:
             return self.async_abort(reason="invalid_token")
 
-        return await self._async_create_private_key_entry(private_key, "BeHome")
+        return await self._async_create_private_key_entry(private_key)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -98,9 +116,7 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         if not private_key:
             return self.async_abort(reason="wechat_not_scanned")
 
-        return await self._async_create_private_key_entry(
-            private_key, "BeHome (WeChat)"
-        )
+        return await self._async_create_private_key_entry(private_key)
 
     async def async_step_oauth(
         self, user_input: dict[str, Any] | None = None
@@ -117,9 +133,7 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         if user_input is not None:
             private_key = str(user_input.get(CONF_PRIVATE_KEY, "")).strip()
             if private_key:
-                return await self._async_create_private_key_entry(
-                    private_key, "BeHome (Manual)"
-                )
+                return await self._async_create_private_key_entry(private_key)
             errors["base"] = "empty_key"
 
         return self.async_show_form(
@@ -224,15 +238,156 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         private_key = access_token[4:-4]
         return private_key if _UID_RE.match(private_key) else None
 
-    async def _async_create_private_key_entry(
-        self, private_key: str, title: str
-    ) -> dict[str, Any]:
+    async def _async_create_private_key_entry(self, private_key: str) -> dict[str, Any]:
         """Create a config entry for a Bemfa private key."""
         unique_id = hashlib.sha256(private_key.encode("utf-8")).hexdigest()
         await self.async_set_unique_id(unique_id)
         self._abort_if_unique_id_configured()
 
         return self.async_create_entry(
-            title=title,
+            title=_entry_title_from_private_key(private_key),
             data={CONF_PRIVATE_KEY: private_key},
         )
+
+
+class BeHomeOptionsFlow(config_entries.OptionsFlow):
+    """Handle BeHome options."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize the options flow."""
+        self.config_entry = config_entry
+        self._sync_mode = config_entry.options.get(CONF_SYNC_MODE, SYNC_MODE_AUTO)
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Manage BeHome sync options."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["auto_sync", "manual_devices"],
+        )
+
+    async def async_step_auto_sync(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Enable automatic device sync."""
+        return self._async_create_options_entry(
+            SYNC_MODE_AUTO,
+            self.config_entry.options.get(CONF_SELECTED_DEVICES, []),
+        )
+
+    async def async_step_manual_devices(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Select devices to sync in manual mode."""
+        private_key = _private_key_from_entry_data(self.config_entry.data)
+        if not private_key:
+            return self.async_abort(reason="invalid_key")
+
+        if user_input is not None:
+            return self._async_create_options_entry(
+                SYNC_MODE_MANUAL,
+                user_input.get(CONF_SELECTED_DEVICES, []),
+            )
+
+        current_selected_devices = self.config_entry.options.get(
+            CONF_SELECTED_DEVICES, []
+        )
+        if not isinstance(current_selected_devices, list):
+            current_selected_devices = []
+        current_selected_devices = _normalize_device_ids(current_selected_devices)
+
+        devices = await self._async_get_devices(private_key)
+        device_options = _device_multi_select_options(
+            devices, current_selected_devices
+        )
+
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_SELECTED_DEVICES,
+                    default=current_selected_devices,
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=device_options,
+                        mode=SelectSelectorMode.LIST,
+                        multiple=True,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="manual_devices",
+            data_schema=schema,
+        )
+
+    def _async_create_options_entry(
+        self, sync_mode: str, selected_devices: Any
+    ) -> dict[str, Any]:
+        """Create an options entry."""
+        return self.async_create_entry(
+            title="",
+            data={
+                CONF_SYNC_MODE: sync_mode,
+                CONF_SELECTED_DEVICES: _normalize_device_ids(selected_devices),
+            },
+        )
+
+    async def _async_get_devices(self, private_key: str) -> list[dict[str, Any]]:
+        """Fetch devices for the options form."""
+        session = async_get_clientsession(self.hass)
+        api = BemfaAPI(private_key, session)
+        return await api.get_devices()
+
+
+def _private_key_from_entry_data(data: dict[str, Any]) -> str | None:
+    """Extract the private key from current or legacy config entry data."""
+    private_key = data.get(CONF_PRIVATE_KEY)
+    if isinstance(private_key, str) and private_key:
+        return private_key
+
+    token = data.get("token")
+    access_token = token.get("access_token") if isinstance(token, dict) else None
+    if isinstance(access_token, str) and len(access_token) > 8:
+        return access_token[4:-4]
+
+    return None
+
+
+def _entry_title_from_private_key(private_key: str) -> str:
+    """Return the config entry title for a BeHome account."""
+    return f"BeHome ({private_key[-6:]})"
+
+
+def _normalize_device_ids(value: Any) -> list[str]:
+    """Normalize selected device IDs from config flow data."""
+    if not isinstance(value, list):
+        return []
+    return [str(device_id) for device_id in value]
+
+
+def _device_multi_select_options(
+    devices: list[dict[str, Any]], selected_device_ids: list[str]
+) -> list[SelectOptionDict]:
+    """Build labels for the device multi-select field."""
+    options: dict[str, SelectOptionDict] = {}
+    for device in devices:
+        device_id = str(device.get("deviceID") or "")
+        if not device_id:
+            continue
+
+        name = str(device.get("name") or device.get("topic") or device_id)
+        topic = str(device.get("topic") or device_id)
+        options[device_id] = SelectOptionDict(
+            value=device_id,
+            label=f"{name} ({topic})",
+        )
+
+    for device_id in selected_device_ids:
+        options.setdefault(
+            device_id,
+            SelectOptionDict(value=device_id, label=f"已选择设备 ({device_id})"),
+        )
+
+    return list(options.values())
