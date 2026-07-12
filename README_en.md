@@ -26,7 +26,7 @@ English | [简体中文](README.md)
   - Media players (TVs)
   - Air purifiers
   - Sensors
-- **Automatic Device Sync**: All supported devices in the account are imported automatically
+- **Device Sync Modes**: Import all supported devices automatically by default, or manually select which devices to sync
 - **Real-time Updates**: Device state polling every 5 seconds
 - **Area Integration**: Automatic mapping to Home Assistant areas
 
@@ -77,13 +77,15 @@ Only OAuth2 login requires this step. WeChat QR code login and private key login
 3. Select the BeHome integration
 4. Choose **WeChat QR code login**, **OAuth2**, or **manual private key entry**
 5. Complete the selected login flow
-6. Your BeHome devices will be automatically discovered and added
+6. Your BeHome devices will be discovered and added according to the sync settings
 
 ### Device Sync
 
-Once authenticated, all supported BeHome devices in the account will be automatically imported and configured. The setup flow does not ask users to select devices. If users do not want to use a device in Home Assistant, they can disable the corresponding device or entity in Home Assistant.
+Once authenticated, all supported BeHome devices in the account will be imported automatically by default.
 
-When new supported devices are added to the BeHome account later, the integration will discover them during polling and create the corresponding entities automatically.
+To prevent unselected devices from syncing to Home Assistant, go to **Settings** -> **Devices & Services** -> **BeHome** -> **Configure**, change the sync mode to **manual device selection**, and select only the devices you want to sync. In manual mode, unselected devices and entities previously created by this integration are removed from the Home Assistant registries. If no devices are selected, all devices and entities created by this integration are removed. The cleanup only matches devices created by the current BeHome config entry and does not delete the user's original Home Assistant devices.
+
+In automatic mode, when new supported devices are added to the BeHome account later, the integration will discover them during polling and create the corresponding entities automatically. In manual mode, new devices sync only after they are selected.
 
 The integration will:
 - Create entities for each device based on their type

@@ -5,9 +5,16 @@ import hashlib
 import logging
 import time
 
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_entry_oauth2_flow, area_registry, config_validation as cv
+from homeassistant.core import Event, HomeAssistant
+from homeassistant.helpers import (
+    area_registry,
+    config_entry_oauth2_flow,
+    config_validation as cv,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -15,14 +22,18 @@ from .const import (
     DOMAIN,
     PLATFORMS,
     CONF_PRIVATE_KEY,
+    CONF_SELECTED_DEVICES,
+    CONF_SYNC_MODE,
     OAUTH2_CLIENT_ID,
     OAUTH2_AUTHORIZE_URL,
     OAUTH2_TOKEN_URL,
+    SYNC_MODE_MANUAL,
 )
 from .api import BemfaAPI
 
 SCAN_INTERVAL = timedelta(seconds=5)
 _LOGGER = logging.getLogger(__name__)
+_DEFAULT_ENTRY_TITLES = {"BeHome", "BeHome (WeChat)", "BeHome (Manual)"}
 
 # This integration can only be configured via config entries
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -130,21 +141,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     unique_id = _unique_id_from_private_key(private_key)
-    if entry.data.get(CONF_PRIVATE_KEY) != private_key or entry.unique_id != unique_id:
+    entry_updates = {}
+    if entry.data.get(CONF_PRIVATE_KEY) != private_key:
+        entry_updates["data"] = {CONF_PRIVATE_KEY: private_key}
+    if entry.unique_id != unique_id:
+        entry_updates["unique_id"] = unique_id
+    if entry.title in _DEFAULT_ENTRY_TITLES:
+        entry_title = _entry_title_from_private_key(private_key)
+        if entry.title != entry_title:
+            entry_updates["title"] = entry_title
+
+    if entry_updates:
         hass.config_entries.async_update_entry(
             entry,
-            data={CONF_PRIVATE_KEY: private_key},
-            unique_id=unique_id,
+            **entry_updates,
         )
 
     session = async_get_clientsession(hass)
     api = BemfaAPI(private_key, session)
 
+    async def _async_get_filtered_devices():
+        """Fetch devices and apply the configured sync mode."""
+        devices = await api.get_devices()
+        return _filter_devices_for_entry(entry, devices)
+
     coordinator = SmartDataUpdateCoordinator(
         hass,
         _LOGGER,
         name="behome_devices",
-        update_method=api.get_devices,
+        update_method=_async_get_filtered_devices,
         update_interval=SCAN_INTERVAL,
     )
 
@@ -157,6 +182,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _schedule_remove_unselected_manual_devices(hass, entry)
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     return True
 
 
@@ -166,6 +193,107 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
+
+
+async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the config entry when options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _filter_devices_for_entry(
+    entry: ConfigEntry, devices: list[dict]
+) -> list[dict]:
+    """Filter BeHome devices according to the configured sync mode."""
+    if entry.options.get(CONF_SYNC_MODE) != SYNC_MODE_MANUAL:
+        return devices
+
+    selected_devices = entry.options.get(CONF_SELECTED_DEVICES, [])
+    if not isinstance(selected_devices, list):
+        return []
+
+    selected_device_ids = {str(device_id) for device_id in selected_devices}
+    return [
+        device
+        for device in devices
+        if str(device.get("deviceID", "")) in selected_device_ids
+    ]
+
+
+def _remove_unselected_manual_devices(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Remove BeHome registry entries that are not selected in manual mode."""
+    if entry.options.get(CONF_SYNC_MODE) != SYNC_MODE_MANUAL:
+        return
+
+    selected_devices = entry.options.get(CONF_SELECTED_DEVICES, [])
+    if not isinstance(selected_devices, list):
+        selected_devices = []
+    selected_device_ids = {str(device_id) for device_id in selected_devices}
+
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+
+    stale_device_entry_ids = set()
+    for device_entry in dr.async_entries_for_config_entry(
+        device_registry, entry.entry_id
+    ):
+        behome_device_id = _behome_device_id_from_device_entry(device_entry)
+        if behome_device_id is None or behome_device_id in selected_device_ids:
+            continue
+        stale_device_entry_ids.add(device_entry.id)
+
+    stale_entity_ids = [
+        entity_entry.entity_id
+        for entity_entry in er.async_entries_for_config_entry(
+            entity_registry, entry.entry_id
+        )
+        if (
+            entity_entry.platform == DOMAIN
+            and entity_entry.device_id in stale_device_entry_ids
+        )
+    ]
+    for entity_id in stale_entity_ids:
+        entity_registry.async_remove(entity_id)
+
+    for device_entry_id in stale_device_entry_ids:
+        device_registry.async_remove_device(device_entry_id)
+
+    if stale_entity_ids or stale_device_entry_ids:
+        _LOGGER.info(
+            "Removed %d unselected BeHome entities and %d devices from registry",
+            len(stale_entity_ids),
+            len(stale_device_entry_ids),
+        )
+
+
+def _behome_device_id_from_device_entry(device_entry: dr.DeviceEntry) -> str | None:
+    """Return the BeHome cloud device ID from a device registry entry."""
+    for identifier_domain, identifier_value in device_entry.identifiers:
+        if identifier_domain == DOMAIN:
+            return str(identifier_value)
+    return None
+
+
+def _schedule_remove_unselected_manual_devices(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Remove unselected devices after HA startup registry writes are stable."""
+    if entry.options.get(CONF_SYNC_MODE) != SYNC_MODE_MANUAL:
+        return
+
+    if hass.is_running:
+        _remove_unselected_manual_devices(hass, entry)
+        return
+
+    def _async_remove_after_start(_event: Event) -> None:
+        _remove_unselected_manual_devices(hass, entry)
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STARTED, _async_remove_after_start
+        )
+    )
 
 
 def _private_key_from_entry(entry: ConfigEntry) -> str | None:
@@ -185,3 +313,8 @@ def _private_key_from_entry(entry: ConfigEntry) -> str | None:
 def _unique_id_from_private_key(private_key: str) -> str:
     """Return a stable, non-secret unique ID for a private key."""
     return hashlib.sha256(private_key.encode("utf-8")).hexdigest()
+
+
+def _entry_title_from_private_key(private_key: str) -> str:
+    """Return the config entry title for a BeHome account."""
+    return f"BeHome ({private_key[-6:]})"
