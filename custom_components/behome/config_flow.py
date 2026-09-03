@@ -255,8 +255,7 @@ class BeHomeOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize the options flow."""
-        self.config_entry = config_entry
-        self._sync_mode = config_entry.options.get(CONF_SYNC_MODE, SYNC_MODE_AUTO)
+        self._behome_config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -273,14 +272,14 @@ class BeHomeOptionsFlow(config_entries.OptionsFlow):
         """Enable automatic device sync."""
         return self._async_create_options_entry(
             SYNC_MODE_AUTO,
-            self.config_entry.options.get(CONF_SELECTED_DEVICES, []),
+            self._behome_config_entry.options.get(CONF_SELECTED_DEVICES, []),
         )
 
     async def async_step_manual_devices(
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Select devices to sync in manual mode."""
-        private_key = _private_key_from_entry_data(self.config_entry.data)
+        private_key = _private_key_from_entry_data(self._behome_config_entry.data)
         if not private_key:
             return self.async_abort(reason="invalid_key")
 
@@ -290,7 +289,7 @@ class BeHomeOptionsFlow(config_entries.OptionsFlow):
                 user_input.get(CONF_SELECTED_DEVICES, []),
             )
 
-        current_selected_devices = self.config_entry.options.get(
+        current_selected_devices = self._behome_config_entry.options.get(
             CONF_SELECTED_DEVICES, []
         )
         if not isinstance(current_selected_devices, list):
