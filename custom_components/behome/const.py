@@ -13,9 +13,8 @@ API_DEVICE_LIST_URL = f"{API_BASE_URL}/device"
 API_DEVICE_CONTROL_URL = f"{API_BASE_URL}/postMassage"
 
 # WeChat scan login
-WECHAT_QR_URL = "https://go.bemfa.com/v3/getwximg?key=bemfa&q=2"
-WECHAT_QR_IMAGE_URL = "https://mp.weixin.qq.com/cgi-bin/showqrcode?ticket={ticket}"
-WECHAT_LOGIN_POLL_URL = "https://go.bemfa.com/vb/web/v2/wechatLoginByEventKey"
+WECHAT_SESSION_URL = "https://pro.bemfa.com/v4/official/v1/wechatLoginSession"
+WECHAT_LOGIN_POLL_URL = "https://pro.bemfa.com/v4/official/v1/wechatLoginExchange"
 
 # Platforms
 PLATFORMS = [

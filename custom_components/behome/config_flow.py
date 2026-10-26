@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import logging
 import re
+import time
 from typing import Any
 
 import voluptuous as vol
@@ -28,12 +29,10 @@ from .const import (
     SYNC_MODE_AUTO,
     SYNC_MODE_MANUAL,
     WECHAT_LOGIN_POLL_URL,
-    WECHAT_QR_IMAGE_URL,
-    WECHAT_QR_URL,
+    WECHAT_SESSION_URL,
 )
 
-WECHAT_LOGIN_TIMEOUT = 120
-WECHAT_LOGIN_POLL_INTERVAL = 3
+WECHAT_LOGIN_POLL_INTERVAL = 5
 _UID_RE = re.compile(r"^[0-9a-fA-F]{32}$|^[A-Za-z0-9_-]{45}$")
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,7 +52,10 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
 
     def __init__(self) -> None:
         """Initialize the config flow."""
-        self._wechat_sid: str | None = None
+        super().__init__()
+        self._wechat_session_id: str | None = None
+        self._wechat_exchange_token: str | None = None
+        self._wechat_expires_at: float = 0
         self._wechat_qr_image_url: str | None = None
         self._wechat_login_task: asyncio.Task[str | None] | None = None
 
@@ -83,9 +85,6 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Handle WeChat QR code login."""
-        if self._wechat_login_task and self._wechat_login_task.done():
-            return self.async_show_progress_done(next_step_id="wechat_done")
-
         if not self._wechat_login_task:
             if not await self._async_prepare_wechat_qr():
                 return self.async_abort(reason="wechat_qr_failed")
@@ -93,6 +92,9 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
             self._wechat_login_task = self.hass.async_create_task(
                 self._async_wait_for_wechat_private_key()
             )
+
+        if self._wechat_login_task.done():
+            return self.async_show_progress_done(next_step_id="wechat_done")
 
         return self.async_show_progress(
             step_id="wechat_scan",
@@ -110,13 +112,24 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
 
         try:
             private_key = self._wechat_login_task.result()
-        except Exception:
+        except TimeoutError:
+            _LOGGER.debug("WeChat login session expired")
+            return self.async_abort(reason="wechat_not_scanned")
+        except Exception as err:
+            _LOGGER.warning("WeChat login failed: %s", err)
             return self.async_abort(reason="wechat_login_failed")
 
         if not private_key:
             return self.async_abort(reason="wechat_not_scanned")
 
         return await self._async_create_private_key_entry(private_key)
+
+    @callback
+    def async_remove(self) -> None:
+        """Stop polling when the login flow is closed or removed."""
+        if self._wechat_login_task is not None:
+            self._wechat_login_task.cancel()
+        super().async_remove()
 
     async def async_step_oauth(
         self, user_input: dict[str, Any] | None = None
@@ -143,89 +156,125 @@ class BeHomeConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domai
         )
 
     async def _async_prepare_wechat_qr(self) -> bool:
-        """Fetch a WeChat QR ticket and prepare the image URL."""
+        """Create a QR login session using the official V4 API."""
         session = async_get_clientsession(self.hass)
 
         try:
-            async with session.get(WECHAT_QR_URL, timeout=30) as response:
+            async with session.post(WECHAT_SESSION_URL, timeout=30) as response:
                 if response.status >= 400:
                     return False
                 data = await response.json(content_type=None)
-        except Exception:
+        except Exception as err:
+            _LOGGER.warning("WeChat session request failed: %s", type(err).__name__)
             return False
 
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or data.get("code") != 0:
             return False
 
         payload = data.get("data") if isinstance(data.get("data"), dict) else {}
-        ticket = str(payload.get("url") or "")
-        sid = str(payload.get("sid") or "")
-        if not ticket or not sid:
+        for key in ("qr_code_url", "session_id", "exchange_token"):
+            if not isinstance(payload.get(key), str) or not payload[key]:
+                return False
+        try:
+            expires_at = float(payload.get("expires_at", 0))
+        except (TypeError, ValueError):
+            return False
+        if expires_at <= time.time():
             return False
 
-        self._wechat_sid = sid
-        self._wechat_qr_image_url = WECHAT_QR_IMAGE_URL.format(ticket=ticket)
+        self._wechat_session_id = payload["session_id"]
+        self._wechat_exchange_token = payload["exchange_token"]
+        self._wechat_expires_at = expires_at
+        self._wechat_qr_image_url = payload["qr_code_url"]
+        _LOGGER.debug("WeChat login QR code prepared")
         return True
 
     async def _async_wait_for_wechat_private_key(self) -> str | None:
         """Poll WeChat login result until success or timeout."""
-        if not self._wechat_sid:
+        if not self._wechat_session_id or not self._wechat_exchange_token:
             return None
 
-        deadline = self.hass.loop.time() + WECHAT_LOGIN_TIMEOUT
-        while self.hass.loop.time() < deadline:
-            payload = await self._async_poll_wechat_login()
-            if payload:
-                return self._private_key_from_wechat_payload(payload)
-            await asyncio.sleep(WECHAT_LOGIN_POLL_INTERVAL)
-
-        return None
+        timeout = max(0, self._wechat_expires_at - time.time())
+        _LOGGER.debug(
+            "WeChat login polling started: interval=%ss timeout=%.0fs",
+            WECHAT_LOGIN_POLL_INTERVAL,
+            timeout,
+        )
+        async with asyncio.timeout(timeout):
+            while True:
+                payload = await self._async_poll_wechat_login()
+                if payload is not None:
+                    private_key = self._private_key_from_wechat_payload(payload)
+                    if not private_key:
+                        raise ValueError("WeChat login returned an invalid private key")
+                    _LOGGER.debug("WeChat login polling completed successfully")
+                    return private_key
+                await asyncio.sleep(WECHAT_LOGIN_POLL_INTERVAL)
 
     async def _async_poll_wechat_login(self) -> dict[str, Any] | None:
         """Poll the backend for a WeChat login result."""
+        if not self._wechat_session_id or not self._wechat_exchange_token:
+            return None
         session = async_get_clientsession(self.hass)
 
-        try:
-            async with session.post(
-                WECHAT_LOGIN_POLL_URL,
-                json={"eventKey": self._wechat_sid},
-                timeout=30,
-            ) as response:
-                if response.status >= 400:
-                    return None
-                data = await response.json(content_type=None)
-        except Exception:
-            return None
+        _LOGGER.debug("WeChat login poll request started")
+        async with session.post(
+            WECHAT_LOGIN_POLL_URL,
+            json={
+                "session_id": self._wechat_session_id,
+                "exchange_token": self._wechat_exchange_token,
+            },
+            timeout=30,
+        ) as response:
+            data = await response.json(content_type=None)
 
-        if not isinstance(data, dict):
-            return None
-
-        if data.get("code") != 0:
-            return None
+        if (
+            response.status >= 400
+            or not isinstance(data, dict)
+            or data.get("code") != 0
+        ):
+            raise ValueError(f"WeChat exchange request failed (HTTP {response.status})")
 
         payload = data.get("data") if isinstance(data.get("data"), dict) else None
-        if not payload or payload.get("code") != 0:
+        ready = bool(
+            payload
+            and payload.get("code") == 0
+            and payload.get("status") == "completed"
+        )
+        _LOGGER.debug(
+            "WeChat login poll response: HTTP %s, login_ready=%s",
+            response.status,
+            ready,
+        )
+        if payload and payload.get("status") == "expired":
+            raise TimeoutError("WeChat login session has expired")
+        if not ready:
             return None
 
         return payload
 
     def _private_key_from_wechat_payload(self, data: dict[str, Any]) -> str | None:
         """Extract the Bemfa private key from the WeChat login payload."""
-        open_id = str(data.get("openID") or "")
-        if len(open_id) <= 6:
-            return None
-
-        encoded_uid = open_id[1:-2][1:-2]
-        padding = "=" * ((4 - len(encoded_uid) % 4) % 4)
-        try:
-            private_key = base64.b64decode(encoded_uid + padding).decode("utf-8")
-        except (binascii.Error, UnicodeDecodeError):
-            return None
-
-        if not _UID_RE.match(private_key):
-            return None
-
-        return private_key
+        # V4 supplies the Base64 UID used by the web client's legacy cookie.
+        candidates = [data.get("uid")]
+        open_id = data.get("openID")
+        if isinstance(open_id, str) and len(open_id) > 6:
+            candidates.append(open_id[1:-2][1:-2])
+        for candidate in candidates:
+            if not isinstance(candidate, str) or not candidate:
+                continue
+            if _UID_RE.fullmatch(candidate):
+                return candidate
+            try:
+                private_key = base64.b64decode(
+                    candidate + "=" * ((4 - len(candidate) % 4) % 4),
+                    validate=True,
+                ).decode("utf-8")
+            except (binascii.Error, UnicodeDecodeError):
+                continue
+            if _UID_RE.fullmatch(private_key):
+                return private_key
+        return None
 
     @staticmethod
     def _private_key_from_oauth_data(data: dict[str, Any]) -> str | None:
